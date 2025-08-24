@@ -29,14 +29,14 @@ jobs:
           
       - name: Run n8n via Docker and Start ngrok Tunnel
         run: |
-          # Start the n8n container with a Timezone environment variable to ensure stable startup
+          # Start a SPECIFIC version of n8n AND provide the critical Timezone variable.
           echo "Starting n8n Docker container..."
           docker run \
             -d \
             --name n8n \
             -p 5678:5678 \
             -e TZ=America/New_York \
-            n8nio/n8n
+            n8nio/n8n:1.45.1
           
           # --- ROBUST WAITING LOGIC ---
           echo "Waiting for n8n to become available on port 5678..."
