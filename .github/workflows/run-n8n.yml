@@ -13,7 +13,6 @@ jobs:
         run: |
           echo "Initial disk space:"
           df -h
-          # Remove large pre-installed tools we don't need
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /opt/ghc
           sudo rm -rf /usr/local/share/boost
@@ -30,13 +29,18 @@ jobs:
           
       - name: Run n8n via Docker and Start ngrok Tunnel
         run: |
-          # Start the official n8n Docker container in the background
+          # Start the n8n container with a Timezone environment variable to ensure stable startup
           echo "Starting n8n Docker container..."
-          docker run -d --name n8n -p 5678:5678 n8nio/n8n
+          docker run \
+            -d \
+            --name n8n \
+            -p 5678:5678 \
+            -e TZ=America/New_York \
+            n8nio/n8n
           
           # --- ROBUST WAITING LOGIC ---
           echo "Waiting for n8n to become available on port 5678..."
-          max_wait=120 # Wait up to 2 minutes for the container to start
+          max_wait=120 # Wait up to 2 minutes
           count=0
           while ! curl --silent --fail http://localhost:5678 &>/dev/null; do
               if [ $count -ge $max_wait ]; then
@@ -52,4 +56,24 @@ jobs:
           echo ""
           echo "✅ n8n container is up and running!"
           
-          # Start
+          # Start ngrok
+          echo "Starting ngrok tunnel..."
+          ngrok http 5678 &> /dev/null &
+          sleep 2
+          
+          # Install jq and get the public URL
+          sudo apt-get update && sudo apt-get install -y jq
+          N8N_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          
+          if [ -z "$N8N_URL" ]; then
+            echo "::error::Could not retrieve ngrok tunnel URL."
+            exit 1
+          fi
+          
+          echo "✅ n8n instance is running and publicly accessible!"
+          echo "--------------------------------------------------------"
+          echo "Access your n8n instance at this URL:"
+          echo $N8N_URL
+          echo "--------------------------------------------------------"
+          
+          while true; do sleep 1000; done
