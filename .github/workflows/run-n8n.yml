@@ -1,7 +1,7 @@
 name: Debug via SSH
 
 on:
-  workflow_dispatch: # Recommended to run this manually, not on every push
+  workflow_dispatch:
 
 jobs:
   debug:
@@ -14,16 +14,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openssh-server jq
 
-          # Create a 'runner' user and set up SSH for key-based authentication
-          sudo useradd -m -s /bin/bash runner
+          # The 'runner' user already exists, so we just configure its SSH access.
+          # Create the .ssh directory and add the authorized public key.
           sudo mkdir -p /home/runner/.ssh
           echo "${{ secrets.SSH_PUBLIC_KEY }}" | sudo tee /home/runner/.ssh/authorized_keys > /dev/null
+
+          # Set the correct ownership and permissions for SSH
           sudo chown -R runner:runner /home/runner/.ssh
           sudo chmod 700 /home/runner/.ssh
           sudo chmod 600 /home/runner/.ssh/authorized_keys
 
-          # Start the SSH server
-          sudo systemctl start ssh
+          # Disable password-based authentication for security
+          sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/g' /etc/ssh/sshd_config
+          sudo sed -i 's/PasswordAuthentication yes/PasswordAuthentication no/g' /etc/ssh/sshd_config
+
+          # Restart the SSH server to apply changes
+          sudo systemctl restart ssh
 
       - name: Setup ngrok
         run: |
@@ -49,7 +55,6 @@ jobs:
           if [ -z "$TUNNEL_URL" ] || [ "$TUNNEL_URL" == "null" ]; then
             echo "::error::Could not retrieve ngrok tunnel URL. ngrok logs:"
             killall ngrok
-            # You might need to check ngrok's logs or status if this fails.
             exit 1
           fi
 
