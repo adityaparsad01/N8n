@@ -1,0 +1,65 @@
+# .github/workflows/run-n8n.yml
+name: Run n8n Session
+
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  n8n_session:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18' # Use a version compatible with n8n
+
+      - name: Install n8n
+        run: npm install -g n8n
+
+      - name: Install and Configure ngrok
+        run: |
+          # Download and install ngrok
+          wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz
+          sudo tar -xvzf ngrok.tgz -C /usr/local/bin
+          rm ngrok.tgz
+
+          # Authenticate ngrok using the secret
+          ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+          
+      - name: Run n8n and Start ngrok Tunnel
+        run: |
+          # Start n8n in the background
+          echo "Starting n8n server in the background..."
+          n8n &> n8n.log &
+          
+          # Start ngrok tunnel to expose n8n's port (5678)
+          # We run this in the background as well
+          echo "Starting ngrok tunnel..."
+          ngrok http 5678 &> /dev/null &
+          
+          # Wait a few seconds for the services to start up
+          sleep 10
+          
+          # Get the public URL from the ngrok API and print it
+          # We install 'jq' to easily parse the JSON response
+          sudo apt-get install -y jq
+          N8N_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          
+          if [ -z "$N8N_URL" ]; then
+            echo "::error::Could not retrieve ngrok tunnel URL. Check n8n.log for errors."
+            cat n8n.log
+            exit 1
+          fi
+          
+          echo "✅ n8n instance is running and accessible!"
+          echo "--------------------------------------------------------"
+          echo "Access your n8n instance at this URL:"
+          echo $N8N_URL
+          echo "--------------------------------------------------------"
+          echo "NOTE: This is a temporary session. All data will be lost when the workflow is stopped."
+          echo "To stop the session, cancel the workflow run in the GitHub Actions UI."
+          
+          # Keep the job running so the server and tunnel stay alive
+          while true; do sleep 1000; done
