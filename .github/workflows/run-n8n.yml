@@ -12,8 +12,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # Use Node.js v20 to match n8n's requirements
-          node-version: '20'
+          node-version: '20' # Using v20 as required by modern n8n
 
       - name: Install n8n
         run: npm install -g n8n
@@ -27,26 +26,50 @@ jobs:
           
       - name: Run n8n and Start ngrok Tunnel
         run: |
+          # Start n8n in the background, logging its output to a file
           echo "Starting n8n server in the background..."
           n8n &> n8n.log &
           
+          # --- ROBUST WAITING LOGIC ---
+          echo "Waiting for n8n to become available on port 5678..."
+          max_wait=60 # Maximum wait time in seconds
+          count=0
+          # Loop until port 5678 is open or we time out
+          while ! curl --silent --fail http://localhost:5678 &>/dev/null; do
+              if [ $count -ge $max_wait ]; then
+                  echo "::error::n8n failed to start within $max_wait seconds."
+                  echo "--- n8n logs ---"
+                  cat n8n.log
+                  exit 1
+              fi
+              printf "."
+              sleep 1
+              ((count++))
+          done
+          echo "" # Newline after the dots
+          echo "✅ n8n server is up and running!"
+          
+          # Now that we know n8n is ready, start ngrok
           echo "Starting ngrok tunnel..."
           ngrok http 5678 &> /dev/null &
           
-          sleep 10
+          # Wait a moment for ngrok to establish the tunnel
+          sleep 2
           
+          # Get the public URL from the ngrok API
           sudo apt-get install -y jq
           N8N_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
           if [ -z "$N8N_URL" ]; then
-            echo "::error::Could not retrieve ngrok tunnel URL."
+            echo "::error::Could not retrieve ngrok tunnel URL, even though n8n is running."
             exit 1
           fi
           
-          echo "✅ n8n instance is running and accessible!"
+          echo "✅ n8n instance is running and publicly accessible!"
           echo "--------------------------------------------------------"
           echo "Access your n8n instance at this URL:"
           echo $N8N_URL
           echo "--------------------------------------------------------"
           
+          # Keep the job running
           while true; do sleep 1000; done
