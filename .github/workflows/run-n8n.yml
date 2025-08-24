@@ -1,79 +1,70 @@
-# .github/workflows/run-n8n.yml
-name: Run n8n Session (Docker)
+name: Debug via SSH
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Recommended to run this manually, not on every push
 
 jobs:
-  n8n_session:
+  debug:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Free Up Disk Space
+      - name: Setup SSH Server
         run: |
-          echo "Initial disk space:"
-          df -h
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf $AGENT_TOOLSDIRECTORY
-          echo "Disk space after cleanup:"
-          df -h
+          # Install necessary packages
+          sudo apt-get update
+          sudo apt-get install -y openssh-server jq
 
-      - name: Install and Configure ngrok
+          # Create a 'runner' user and set up SSH for key-based authentication
+          sudo useradd -m -s /bin/bash runner
+          sudo mkdir -p /home/runner/.ssh
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" | sudo tee /home/runner/.ssh/authorized_keys > /dev/null
+          sudo chown -R runner:runner /home/runner/.ssh
+          sudo chmod 700 /home/runner/.ssh
+          sudo chmod 600 /home/runner/.ssh/authorized_keys
+
+          # Start the SSH server
+          sudo systemctl start ssh
+
+      - name: Setup ngrok
         run: |
+          # Download and install ngrok
           wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz
           sudo tar -xvzf ngrok.tgz -C /usr/local/bin
           rm ngrok.tgz
+
+          # Authenticate ngrok
           ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-          
-      - name: Run n8n via Docker and Start ngrok Tunnel
+      
+      - name: Create ngrok Tunnel and Output Connection Info
         run: |
-          # Start a SPECIFIC version of n8n AND provide the critical Timezone variable.
-          echo "Starting n8n Docker container..."
-          docker run \
-            -d \
-            --name n8n \
-            -p 5678:5678 \
-            -e TZ=America/New_York \
-            n8nio/n8n:1.45.1
+          # Start ngrok tunnel in the background for SSH (port 22)
+          ngrok tcp 22 &
+
+          # Wait a few seconds for the tunnel to be established
+          sleep 5
+
+          # Get the public URL from the ngrok API and print the SSH command
+          TUNNEL_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
           
-          # --- ROBUST WAITING LOGIC ---
-          echo "Waiting for n8n to become available on port 5678..."
-          max_wait=120 # Wait up to 2 minutes
-          count=0
-          while ! curl --silent --fail http://localhost:5678 &>/dev/null; do
-              if [ $count -ge $max_wait ]; then
-                  echo "::error::n8n container failed to start within $max_wait seconds."
-                  echo "--- Docker container logs ---"
-                  docker logs n8n
-                  exit 1
-              fi
-              printf "."
-              sleep 1
-              ((count++))
-          done
-          echo ""
-          echo "✅ n8n container is up and running!"
-          
-          # Start ngrok
-          echo "Starting ngrok tunnel..."
-          ngrok http 5678 &> /dev/null &
-          sleep 2
-          
-          # Install jq and get the public URL
-          sudo apt-get update && sudo apt-get install -y jq
-          N8N_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          
-          if [ -z "$N8N_URL" ]; then
-            echo "::error::Could not retrieve ngrok tunnel URL."
+          if [ -z "$TUNNEL_URL" ] || [ "$TUNNEL_URL" == "null" ]; then
+            echo "::error::Could not retrieve ngrok tunnel URL. ngrok logs:"
+            killall ngrok
+            # You might need to check ngrok's logs or status if this fails.
             exit 1
           fi
-          
-          echo "✅ n8n instance is running and publicly accessible!"
-          echo "--------------------------------------------------------"
-          echo "Access your n8n instance at this URL:"
-          echo $N8N_URL
-          echo "--------------------------------------------------------"
-          
-          while true; do sleep 1000; done
+
+          # Extract the hostname and port
+          HOSTNAME=$(echo $TUNNEL_URL | sed -e 's/tcp:\/\///' -e 's/:.*//')
+          PORT=$(echo $TUNNEL_URL | sed -e 's/.*://')
+
+          echo "✅ SSH connection command (copy and paste into your terminal):"
+          echo "ssh runner@$HOSTNAME -p $PORT -i /path/to/your/private_key"
+          echo "Example: ssh runner@$HOSTNAME -p $PORT -i ~/.ssh/id_rsa_github_actions"
+          echo "----------------------------------------------------------------"
+          echo "Runner will remain active. To stop it, cancel the workflow run in the GitHub UI."
+
+      - name: Keep Runner Alive
+        run: |
+          # This step will run indefinitely.
+          # You can cancel the workflow run manually in the GitHub Actions UI to terminate the runner.
+          sleep infinity
