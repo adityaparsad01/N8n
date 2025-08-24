@@ -9,6 +9,18 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Free Up Disk Space
+        run: |
+          echo "Initial disk space:"
+          df -h
+          # Remove large pre-installed tools we don't need
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf $AGENT_TOOLSDIRECTORY
+          echo "Disk space after cleanup:"
+          df -h
+
       - name: Install and Configure ngrok
         run: |
           wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz -O ngrok.tgz
@@ -19,15 +31,12 @@ jobs:
       - name: Run n8n via Docker and Start ngrok Tunnel
         run: |
           # Start the official n8n Docker container in the background
-          # -d: run detached (in background)
-          # --name n8n: give it a name so we can see logs easily
-          # -p 5678:5678: map the container's port 5678 to the host's port 5678
           echo "Starting n8n Docker container..."
           docker run -d --name n8n -p 5678:5678 n8nio/n8n
           
           # --- ROBUST WAITING LOGIC ---
           echo "Waiting for n8n to become available on port 5678..."
-          max_wait=120 # Increased wait time for Docker image to start
+          max_wait=120 # Wait up to 2 minutes for the container to start
           count=0
           while ! curl --silent --fail http://localhost:5678 &>/dev/null; do
               if [ $count -ge $max_wait ]; then
@@ -43,24 +52,4 @@ jobs:
           echo ""
           echo "✅ n8n container is up and running!"
           
-          # Start ngrok
-          echo "Starting ngrok tunnel..."
-          ngrok http 5678 &> /dev/null &
-          sleep 2
-          
-          # Get the public URL
-          # No need to install jq, it's usually on the runner
-          N8N_URL=$(curl --silent http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-          
-          if [ -z "$N8N_URL" ]; then
-            echo "::error::Could not retrieve ngrok tunnel URL."
-            exit 1
-          fi
-          
-          echo "✅ n8n instance is running and publicly accessible!"
-          echo "--------------------------------------------------------"
-          echo "Access your n8n instance at this URL:"
-          echo $N8N_URL
-          echo "--------------------------------------------------------"
-          
-          while true; do sleep 1000; done
+          # Start
